@@ -11,9 +11,10 @@ as.kml <- function(animals = list(),
                    animal_icon = TRUE,
                    error_circle = FALSE,
                    simulation_icons= FALSE,
-                   pov_cam = TRUE,
+                   pov_cam = FALSE,
                    manual_cam = FALSE,
                    follow_cam = FALSE,
+                   central_cam = FALSE,
                    color_sim = "A3ff0000",
                    iconsize = 1.5, 
                    markerimage = "https://pixelartmaker-data-78746291193.nyc3.digitaloceanspaces.com/image/fbc13eca20f56cd.png", 
@@ -480,7 +481,6 @@ as.kml <- function(animals = list(),
     } 
     
     if (all_tour) {
-      
       combined_predictions <- cbind(all_animals, all_circle, results)
       #####
       
@@ -506,7 +506,7 @@ as.kml <- function(animals = list(),
       max_distance <- distVincentyEllipsoid(top_left, bottom_right)
       
       altitude <- max_distance * 2
-      
+
       #####
       processing <- data.frame(
         t = combined_predictions$t,
@@ -517,7 +517,10 @@ as.kml <- function(animals = list(),
         animalid = combined_predictions$animalid
       )
       
-
+      rowcount <- nrow(combined_predictions)
+      
+      calculated_duration <- duration /rowcount
+      
       # The tour animation for each animal
       
       
@@ -529,6 +532,8 @@ as.kml <- function(animals = list(),
       num_timesteps <- nrow(results)
       num_column <- ncol(results) - 2
       all_change_content <- vector("list", num_timesteps)
+      all_camera_content <- vector ("list", num_timesteps)
+      
       if (simulation_icons == TRUE) { 
         
         for (b in 1:num_timesteps) {
@@ -554,17 +559,16 @@ as.kml <- function(animals = list(),
           }
         }
       }
-      
       if (animal_icon == TRUE) {
         
         
         
-        for (t in 1:num_timesteps) {
+        for (b in 1:num_timesteps) {
           
           
           # Add animal icons content for this timestep
-          i <- all_animals$i[t]
-          animal_coord <- all_animals$Animal[t]
+          i <- all_animals$i[b]
+          animal_coord <- all_animals$Animal[b]
           
           change_section <- sprintf('
       <Placemark targetId="Animal %d">
@@ -575,16 +579,16 @@ as.kml <- function(animals = list(),
                                     i, animal_coord)
           
           # Add to the existing content in this row
-          all_change_content[[t]] <- paste0(all_change_content[[t]], change_section)
+          all_change_content[[b]] <- paste0(all_change_content[[b]], change_section)
           
         }
       }
       if (error_circle == TRUE) { 
         num_timesteps <- nrow(all_animals)
         
-        for (t in 1:num_timesteps) {
-          i <- all_circle$i[t]
-          coords_str <- all_circle$Circle[t] 
+        for (b in 1:num_timesteps) {
+          i <- all_circle$i[b]
+          coords_str <- all_circle$Circle[b] 
           change_section <- sprintf('
             <Placemark targetId="moving_circle_%s">
               <Polygon>
@@ -598,11 +602,60 @@ as.kml <- function(animals = list(),
                                     i, coords_str)
           
           # Add to the existing content in this row
-          all_change_content[[t]] <- paste0(all_change_content[[t]], change_section)
+          all_change_content[[b]] <- paste0(all_change_content[[b]], change_section)
         }
       }
+      if (central_cam == TRUE){         
+        num_timesteps <- nrow(all_animals)
+
+        
+      for (b in 1:num_timesteps) {
+        
+        animal_coord <- all_animals$Animal[b]
+        
+        current_row <- data.frame(
+          time = all_animals$t[b],  # Access time column in all_animals
+          i = i, 
+          stringsAsFactors = FALSE
+        )
+        
+        change_section <- sprintf('
+              
+        <gx:duration>%f</gx:duration>
+        <gx:flyToMode>smooth</gx:flyToMode>
+        <LookAt>
+          <longitude>%f</longitude>
+          <latitude>%f</latitude>          
+          <altitude>%f</altitude>
+          <tilt>0</tilt>
+          <gx:altitudeMode>relativeToGround</gx:altitudeMode>
+        </LookAt>
+      ',
+                                  calculated_duration, mid_lon, mid_lat, altitude)
+        
+        all_camera_content[[b]] <- paste0(all_camera_content[[b]], change_section)
+        
+      }
       
-      for (i in 1:nrow(combpath)) {
+      }
+      if (manual_cam == TRUE){ 
+        num_timesteps <- nrow(all_animals)
+        
+        for (b in 1:num_timesteps) {
+
+          
+          change_section <- sprintf('
+              
+        <gx:duration>%f</gx:duration>
+      ',
+                                    calculated_duration)
+          
+          all_camera_content[[b]] <- paste0(all_camera_content[[b]], change_section)
+        }
+      }
+      browser()
+      
+      for (b in 1:nrow(combined_predictions)) {
         
         
         kml_content <- paste0(kml_content, sprintf('
@@ -616,22 +669,12 @@ as.kml <- function(animals = list(),
       </gx:AnimatedUpdate>
   
       <gx:FlyTo>
-        <gx:duration>%f</gx:duration>
-        <gx:flyToMode>smooth</gx:flyToMode>
-        <LookAt>
-          <longitude>%f</longitude>
-          <latitude>%f</latitude>
-          <altitude>300</altitude>
-          <heading>0</heading>
-          <tilt>0</tilt>
-          <range>1000</range>
-          <gx:altitudeMode>relativeToGround</gx:altitudeMode>
-        </LookAt>
+       %s
       </gx:FlyTo>
-      ', calculated_duration, all_change_content[[i]], calculated_duration, processing$longitude[i], processing$latitude[i]))
+      ', calculated_duration, all_change_content[[b]], all_camera_content[[b]]))
         
         # monitor message for each animated update
-        message(sprintf("Animating position %d for Moving Circle Polygon %s", i, animalname))
+        message(sprintf("Animating position %d for Moving Circle Polygon %s", b, animalname))
       }
       kml_content <- paste0(kml_content, '
     </gx:Playlist>
@@ -664,3 +707,25 @@ as.kml <- function(animals = list(),
   kml_output <- paste0(kml_header, kml_content, kml_footer)
   writeLines(kml_output, "test.kml")
 }
+
+data("buffalo")
+Mvubu <- buffalo$Mvubu
+Cillia <- buffalo$Cilla
+Pepper <- buffalo$Pepper
+Mvubu <- Mvubu[180:200,]
+Cillia <- Cillia[180:200,]
+Pepper <- Pepper[180:200,]
+GUESS <- ctmm.guess(Cillia, interactive = FALSE)
+FIT <- ctmm.fit(Cillia, GUESS, trace = TRUE)
+GUESS2 <- ctmm.guess(Mvubu, interactive = FALSE)
+FIT2 <- ctmm.fit(Mvubu, GUESS2, trace = TRUE)
+as.kml(CTMM = list(FIT,FIT2),
+       all_tour = TRUE,
+       simulation_icons = TRUE,
+       error_circle = TRUE,
+       central_cam = TRUE,
+       pov_cam = FALSE,
+       follow_cam = TRUE,
+       duration = 60, 
+       animals = list(Cillia,Mvubu), 
+       num_simulations = 10)
