@@ -3,7 +3,7 @@ library(geosphere)
 library(tidyverse)
 library(sf)
 
-as.kml <- function(animals = list(),
+as.kml <- function(DATA,
                    CTMM = list(), 
                    all_tour = FALSE,
                    duration = 180,
@@ -32,10 +32,18 @@ as.kml <- function(animals = list(),
   if (is.null(CTMM)) {
     print("Please provide model('s)")
   }
-  
-  animal_data = animals
+  if (class(DATA) == "list") {
+    if (is.list(CTMM) && all(sapply(CTMM, inherits, "ctmm"))) {
+      ids_from_fit <- sapply(CTMM, function(model) model@info$identity)
+      
+      DATA <- DATA[ids_from_fit]
+    } 
+    } else if (class(DATA) == "telemetry") {
+         DATA = list(DATA)
+  }
+  animal_data = DATA
   number_of_animals <- length(animal_data)
-  
+  browser()
   create_path_kml <- function(coords,altitude, name, color) {
     path_coords <- paste(coords[, 1], coords[, 2], altitude, sep = ",", collapse = " ")
     sprintf('
@@ -93,9 +101,9 @@ as.kml <- function(animals = list(),
     results <- data.frame(time = numeric(), i = numeric(), stringsAsFactors = FALSE)
     all_animals <- data.frame(time = numeric(), i = numeric(), stringsAsFactors = FALSE)
     all_circle <- data.frame(time = numeric(), i = numeric(), stringsAsFactors = FALSE)
-    animal_names <- unlist(animals)
+    animal_names <- unlist(DATA)
     for (i in seq_along(animal_data)) {
-      
+      # this is here due to me making the data not a list anymore, but that breaks the code
       # Variables made for each animal each loop.
       
       animal <- animal_data[[i]]
@@ -653,8 +661,7 @@ as.kml <- function(animals = list(),
           all_camera_content[[b]] <- paste0(all_camera_content[[b]], change_section)
         }
       }
-      browser()
-      
+
       for (b in 1:nrow(combined_predictions)) {
         
         
@@ -690,8 +697,8 @@ as.kml <- function(animals = list(),
     return(kml_content)
   }
   
-  if (length(animals) > 0) {
-    kml_content <- generate_kml_for_animals(animals)
+  if (length(DATA) > 0) {
+    kml_content <- generate_kml_for_animals(DATA)
   } else {
     kml_content <- generate_kml_for_animals(list(data))
   }
@@ -708,24 +715,25 @@ as.kml <- function(animals = list(),
   writeLines(kml_output, "test.kml")
 }
 
-# data("buffalo")
-# Mvubu <- buffalo$Mvubu
-# Cillia <- buffalo$Cilla
-# Pepper <- buffalo$Pepper
-# Mvubu <- Mvubu[180:200,]
-# Cillia <- Cillia[180:200,]
-# Pepper <- Pepper[180:200,]
-# GUESS <- ctmm.guess(Cillia, interactive = FALSE)
-# FIT <- ctmm.fit(Cillia, GUESS, trace = TRUE)
-# GUESS2 <- ctmm.guess(Mvubu, interactive = FALSE)
-# FIT2 <- ctmm.fit(Mvubu, GUESS2, trace = TRUE)
-# as.kml(CTMM = list(FIT,FIT2),
-#        all_tour = TRUE,
-#        simulation_icons = TRUE,
-#        error_circle = TRUE,
-#        central_cam = TRUE,
-#        pov_cam = FALSE,
-#        follow_cam = TRUE,
-#        duration = 60, 
-#        animals = list(Cillia,Mvubu), 
-#        num_simulations = 10)
+ # data("buffalo")
+ # Mvubu <- buffalo$Mvubu
+ # Cillia <- buffalo$Cilla
+ # Pepper <- buffalo$Pepper
+ # Mvubu <- Mvubu[180:200,]
+ # Cillia <- Cillia[180:200,]
+ # Pepper <- Pepper[180:200,]
+ # GUESS <- ctmm.guess(Cillia, interactive = FALSE)
+ # FIT <- ctmm.fit(Cillia, GUESS, trace = TRUE)
+ # GUESS2 <- ctmm.guess(Mvubu, interactive = FALSE)
+ # FIT2 <- ctmm.fit(Mvubu, GUESS2, trace = TRUE)
+as.kml(buffalo,
+       CTMM = list(FIT, FIT2),
+       all_tour = FALSE,
+       simulation_icons = TRUE,
+       error_circle = FALSE,
+       central_cam = TRUE,
+       pov_cam = FALSE,
+       follow_cam = TRUE,
+       sequencetime = 500,
+       duration = 60,
+       num_simulations = 10)
