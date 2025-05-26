@@ -2,7 +2,6 @@ library(ctmm)
 library(geosphere)
 library(tidyverse)
 library(sf)
-
 as.kml <- function(DATA,
                    CTMM = list(), 
                    all_tour = FALSE,
@@ -10,16 +9,17 @@ as.kml <- function(DATA,
                    num_simulations = 10,
                    animal_icon = TRUE,
                    error_circle = FALSE,
+                   error_ellipses = FALSE,
                    simulation_icons= FALSE,
                    pov_cam = FALSE,
                    manual_cam = FALSE,
                    follow_cam = FALSE,
                    central_cam = FALSE,
-                   color_sim = "A3ff0000",
+                   color_sim = "red",
                    iconsize = 1.5, 
                    markerimage = "https://pixelartmaker-data-78746291193.nyc3.digitaloceanspaces.com/image/fbc13eca20f56cd.png", 
-                   color_icon = "A30000ff",
-                   color_pred = "ffffffff",
+                   color_icon = "blue",
+                   color_pred = "green",
                    sequencetime = 3,
                    circlepoints = 15,
                    confidence = 2.45,
@@ -32,6 +32,7 @@ as.kml <- function(DATA,
   if (is.null(CTMM)) {
     print("Please provide model('s)")
   }
+  # To fit the models to the telemetry list and convert individual to a list to allow for proper use in as.kml
   if (class(DATA) == "list") {
     if (is.list(CTMM) && all(sapply(CTMM, inherits, "ctmm"))) {
       ids_from_fit <- sapply(CTMM, function(model) model@info$identity)
@@ -43,9 +44,28 @@ as.kml <- function(DATA,
   }
   animal_data = DATA
   number_of_animals <- length(animal_data)
-  browser()
-  create_path_kml <- function(coords,altitude, name, color) {
+  
+  # Converts a color name and opacity percentage to KML color format
+  get_kml_color <- function(color_name, opacity_percent) {
+    rgb_vals <- col2rgb(color_name)
+    red <- rgb_vals[1]
+    green <- rgb_vals[2]
+    blue <- rgb_vals[3]
+    
+    red_hex <- sprintf("%02X", red)
+    green_hex <- sprintf("%02X", green)
+    blue_hex <- sprintf("%02X", blue)
+    
+    alpha <- round((opacity_percent / 100) * 255)
+    alpha_hex <- sprintf("%02X", alpha)
+    
+    paste0(alpha_hex, blue_hex, green_hex, red_hex)
+  }
+  
+  create_path_kml <- function(coords, altitude, name, color_name, opacity_percent) {
     path_coords <- paste(coords[, 1], coords[, 2], altitude, sep = ",", collapse = " ")
+    kml_color <- get_kml_color(color_name, opacity_percent)
+    
     sprintf('
   <Placemark>
     <name>%s</name>
@@ -61,11 +81,16 @@ as.kml <- function(DATA,
         %s
       </coordinates>
     </LineString>
-  </Placemark>\n', name, color, path_coords) #user designated
+  </Placemark>\n', 
+            name, kml_color, path_coords
+    )
   }
   
-  create_icon_kml <- function(lon,lat, name, color, markerimage, iconsize, iconorder=1) {
-    coord_str <- paste(lon[1], lat[1], sep = ",") 
+  
+  create_icon_kml <- function(lon, lat, name, color_name, opacity_percent,
+                              markerimage, iconsize, iconorder = 1) {
+    coord_str <- paste(lon[1], lat[1], sep = ",")
+    kml_color <- get_kml_color(color_name, opacity_percent)
     
     sprintf('
   <Placemark id = "%s">
@@ -84,15 +109,14 @@ as.kml <- function(DATA,
       <coordinates>%s,0</coordinates>
     </Point>
   </Placemark>', 
-            name, 
-            name,# Placemark name
-            color,
+            name, name,
+            kml_color,
             iconsize,
-            iconorder,# Icon scale
-            markerimage,     # URL for the icon image
-            coord_str     # Coordinates
-    )
+            iconorder,
+            markerimage,
+            coord_str)
   }
+  
   
   generate_kml_for_animals <- function(animal_data) {
     kml_content <- ''
@@ -101,6 +125,8 @@ as.kml <- function(DATA,
     results <- data.frame(time = numeric(), i = numeric(), stringsAsFactors = FALSE)
     all_animals <- data.frame(time = numeric(), i = numeric(), stringsAsFactors = FALSE)
     all_circle <- data.frame(time = numeric(), i = numeric(), stringsAsFactors = FALSE)
+    all_ellipsoid <- data.frame(time = numeric(), i = numeric(), stringsAsFactors = FALSE)
+    
     animal_names <- unlist(DATA)
     for (i in seq_along(animal_data)) {
       # this is here due to me making the data not a list anymore, but that breaks the code
@@ -134,7 +160,8 @@ as.kml <- function(DATA,
           longitude = PRED$longitude,
           latitude = PRED$latitude,
           COV_x_x = PRED$COV.x.x,
-          COV_y_y = PRED$COV.y.y
+          COV_y_y = PRED$COV.y.y,
+          COV_x_y = PRED$COV.x.y
         )
         # project function taken from ctmm
         
@@ -152,28 +179,43 @@ as.kml <- function(DATA,
           colnames(x) <- c("x", "y")
           return(x)
         }
-        
+        browser()
         # this function is what makes the circle coordinates, confidence and circlepoints can be changed by user.
-        
         generate_circle_coord <- function(longitude, latitude, radius, num_points = circlepoints, confidencevalue = confidence, crs_proj = NULL) {
           crs_proj <- crs_proj %||% "+proj=utm +zone=33 +datum=WGS84"
-          
+
           center_coords <- project(data.frame(x = longitude, y = latitude), from = 4326, to = crs_proj)
-          
+
           angles <- seq(0, 2 * pi, length.out = num_points)
           circle_cartesian <- data.frame(
             x = center_coords[1] + (radius * cos(angles))* confidencevalue,
             y = center_coords[2] + (radius * sin(angles))* confidencevalue
           )
-          
           circle_longlat <- project(circle_cartesian, from = crs_proj, to = 4326)
-          
+
           as.data.frame(circle_longlat) %>%
             setNames(c("circle_longitude", "circle_latitude"))
         }
         
+        generate_ellipse_coord <- function(longitude, latitude, sigma, level = 0.95, crs_proj = NULL) {
+          crs_proj <- crs_proj %||% "+proj=utm +zone=33 +datum=WGS84"
+
+          center_coords <- project(data.frame(x = longitude, y = latitude), from = 4326, to = crs_proj)
+
+          mu <- as.numeric(center_coords[1, ])
+          sigma <- sigma
+          ellipse_proj <- ellipsograph(mu, sigma, level = 0.95, PLOT = FALSE)
+
+          ellipse_longlat <- project(ellipse_proj, from = crs_proj, to = 4326)
+          as.data.frame(ellipse_longlat) %>%
+            setNames(c("ellipse_longitude", "ellipse_latitude"))
+        }
+        
+        
+        
         # add raduis into each column and then use the circle coord function to 
-        # generate the long lat for each circle point        
+        # generate the long lat for each circle point   
+        if(error_circle == TRUE){
         processing <- processing %>%
           rowwise() %>%
           mutate(
@@ -181,39 +223,101 @@ as.kml <- function(DATA,
             circle_coords = list(generate_circle_coord(longitude, latitude, radius))
           ) %>%
           ungroup()
+        }
+        #########################################  ERROR ellipsoid   FROM CTMM? #####################
+        clamp <- function(x, lower, upper) {
+          pmax(lower, pmin(x, upper))
+        }
         
-        initial_coords <- paste(
-          apply(processing$circle_coords[[1]], 1, function(row) paste(row, collapse = ",")),
-          collapse = " "
-        )  
+        ellipsograph <- function(mu, sigma, level=0.95, fg="black", bg=NA, PLOT=FALSE,num_points = circlepoints, ...) {
+          Eigen <- eigen(sigma)
+          std <- Eigen$values
+          std[1] <- clamp(std[1], 0, Inf)
+          std[2] <- clamp(std[2], 0, std[1])
+          std <- sqrt(std)
+          vec <- Eigen$vectors
+          
+          alpha <- 1 - level
+          z <- sqrt(-2*log(alpha))  # confidence scale
+          
+          num <- circlepoints
+          theta <- 2*pi*(0:num)/(num+1)
+          Sin <- sin(theta)
+          Cos <- cos(theta)
+          
+          x <- mu[1] + z*(Cos*std[1]*vec[1,1] + Sin*std[2]*vec[1,2])
+          y <- mu[2] + z*(Cos*std[1]*vec[2,1] + Sin*std[2]*vec[2,2])
+          
+          if (PLOT) {
+            plot(x, y, type = "l", asp = 1, col = fg, ...)
+            points(mu[1], mu[2], pch = 19, col = "red") # Mark center
+          } else {
+            return(cbind(x = x, y = y))
+          }
+        }
+        #########################################
         
-        
+        if (error_ellipses == TRUE) {
+          processing <- processing %>%
+            rowwise() %>%
+            mutate(
+              sigma = list(matrix(c(COV_x_x, COV_x_y, COV_x_y, COV_y_y), nrow = 2, byrow = TRUE)),
+              ellipses_coords = list(generate_ellipse_coord(
+                longitude, latitude,
+                sigma = sigma,
+                level = confidence,
+              ))
+            ) %>%
+            ungroup()
+          
+        }
+        browser()
         predict_path <- cbind(PRED$longitude, PRED$latitude)
+        
+        initial_coords <- predict_path[[1]]
+        
         
         all_predictions[[i]] <- PRED           #stores the predictions to be used in the All Tour section
         
         # creates any number of simulations the user wants, with color being set by the user.
-        
+        opacity = 65
         for (sim in 1:num_simulations) {
           lon <- simulations[[sim]]$longitude
           lat <- simulations[[sim]]$latitude
           sim_coords <- cbind(simulations[[sim]]$longitude, simulations[[sim]]$latitude)
-          kml_content <- paste0(kml_content, create_path_kml(sim_coords, path_altitude, name = paste("Animal", i, "Simulation", sim), color_sim))
-          kml_content <- paste0(kml_content, create_icon_kml(lon,lat, name = paste("Simulation", sim, i), color_sim, markerimage,iconsize))
+          kml_content <- paste0(kml_content, create_path_kml(sim_coords, path_altitude, name = paste("Animal", i, "Simulation", sim), color_sim, opacity))
+          kml_content <- paste0(kml_content, create_icon_kml(lon,lat, name = paste("Simulation", sim, i), color_sim, 65,markerimage,iconsize))
         }
         animalname <- animal_names[i] 
         
         icon <- as.character(markerimage)
         # creates the main predicted path
-        kml_content <- paste0(kml_content, create_path_kml(predict_path, path_altitude, name = paste("Animal", i, "Predict Path"), color_pred))
+        kml_content <- paste0(kml_content, create_path_kml(predict_path, path_altitude, name = paste("Animal", i, "Predict Path"), color_pred,opacity))
         
-        kml_content <-paste0(kml_content, create_icon_kml(PRED$longitude,PRED$latitude, name = paste("Animal", i), color_icon, icon,iconsize,iconorder=2))
+        kml_content <-paste0(kml_content, create_icon_kml(PRED$longitude,PRED$latitude, name = paste("Animal", i), color_icon,opacity, icon,iconsize,iconorder=2))
         
         # initial position for each animal marker
         
         kml_content <- paste0(kml_content, sprintf( '
   <Placemark id="moving_circle_%s">
    <name> Moving Animal Circle %s </name>
+    <Polygon>
+    <Style>
+      <PolyStyle>
+        <color>A30000ff</color> 
+      </PolyStyle>
+    </Style>
+      <outerBoundaryIs>
+        <LinearRing>
+          <coordinates>%s</coordinates>
+        </LinearRing>
+      </outerBoundaryIs>
+    </Polygon>
+  </Placemark>
+  ', i, i, initial_coords))
+ kml_content <- paste0(kml_content, sprintf( '
+  <Placemark id="moving_ellipsoid_%s">
+   <name> Moving Animal Ellipsoid %s </name>
     <Polygon>
     <Style>
       <PolyStyle>
@@ -335,6 +439,41 @@ as.kml <- function(DATA,
             
             change_section <- sprintf('
             <Placemark targetId="moving_circle_%s">
+              <Polygon>
+                <outerBoundaryIs>
+                  <LinearRing>
+                    <coordinates>%s</coordinates>
+                  </LinearRing>
+                </outerBoundaryIs>
+              </Polygon>
+            </Placemark>',
+                                      i, coords_str)
+            
+            all_change_content[[b]] <- paste0(all_change_content[[b]], change_section)
+          }
+        }
+        if (error_ellipses == TRUE) { 
+          num_timesteps <- nrow(processing)
+
+          for (b in 1:num_timesteps) {
+            coords_str <- paste(
+              apply(processing$ellipses_coords[[b]], 1, function(row) paste(row, collapse = ",")), 
+              collapse = " "
+            )     
+            current_row <- data.frame(
+              time = PRED$t[b],  # Access time column in PRED
+              i = i, 
+              stringsAsFactors = FALSE
+            )
+            
+            
+            
+            current_row[[paste0("Ellipsoid")]] <- paste(coords_str)
+            
+            all_ellipsoid <- rbind(all_ellipsoid, current_row)
+            
+            change_section <- sprintf('
+            <Placemark targetId="moving_ellipsoid_%s">
               <Polygon>
                 <outerBoundaryIs>
                   <LinearRing>
@@ -715,25 +854,29 @@ as.kml <- function(DATA,
   writeLines(kml_output, "test.kml")
 }
 
- # data("buffalo")
+ data("buffalo")
  # Mvubu <- buffalo$Mvubu
- # Cillia <- buffalo$Cilla
+  Cillia <- buffalo$Cilla
  # Pepper <- buffalo$Pepper
  # Mvubu <- Mvubu[180:200,]
- # Cillia <- Cillia[180:200,]
+  Cillia <- Cillia[180:200,]
  # Pepper <- Pepper[180:200,]
- # GUESS <- ctmm.guess(Cillia, interactive = FALSE)
- # FIT <- ctmm.fit(Cillia, GUESS, trace = TRUE)
+  #GUESS <- ctmm.guess(Cillia, interactive = FALSE)
+  #FIT <- ctmm.fit(Cillia, GUESS, trace = TRUE)
  # GUESS2 <- ctmm.guess(Mvubu, interactive = FALSE)
  # FIT2 <- ctmm.fit(Mvubu, GUESS2, trace = TRUE)
-as.kml(buffalo,
-       CTMM = list(FIT, FIT2),
+as.kml(Cillia,
+       CTMM = list(FIT),
        all_tour = FALSE,
        simulation_icons = TRUE,
-       error_circle = FALSE,
+       error_circle = TRUE,
+       error_ellipses = TRUE,
        central_cam = TRUE,
        pov_cam = FALSE,
        follow_cam = TRUE,
-       sequencetime = 500,
+       sequencetime = 3,
        duration = 60,
+       circlepoints = 25,
        num_simulations = 10)
+Testing <- FIT$sigma
+print(Testing)
