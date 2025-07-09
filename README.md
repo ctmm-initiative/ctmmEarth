@@ -11,7 +11,7 @@ as.kml(animals = list(Cillia),
        simulation_icons = TRUE,
        num_simulations = 10))
 ## Arguments
-animals = Telemetry objects for each animal.
+DATA = Telemetry object containing the animals.
 
 CTMM = Movement model fitted to each animal, listed in the same order as Animals provided.
 
@@ -27,11 +27,19 @@ error_circle = Whether an error circle is created or not
 
 simulation_icons = Optional argument to generate icons on the simulated paths.
 
-pov_cam = Camera mode that will attempt to simulate the point of view of an animal.
+camera_mode = Enter one of the following as such "pov"
 
-manual_cam = Camera mode where the user will position a still view for the animation to be played from.
+ pov = Camera mode that will attempt to simulate the point of view of an animal.
 
-follow_cam = Camera mode where an overhead view will be generated following an animals path
+ manual = Camera mode where the user will position a still view for the animation to be played from.
+
+ follow = Camera mode where an overhead view will be generated following an animals path
+
+all_camera_mode = 
+
+ central = Camera mode that will attempt center the camera to which all animals will be in view when the tour is played.
+
+ manual = Camera mode where the user will position a still view for the animation to be played from.       
 
 color_sim = Color for the simulation generated
 
@@ -45,6 +53,8 @@ color_pred = color for the predicted path
 
 sequencetime = Sequence time used for the simulations
 
+opacity = opacity of the icons
+
 circlepoints = How many points are generated in the error circle
 
 confidence = 2d confidence value given to the error circle
@@ -52,6 +62,14 @@ confidence = 2d confidence value given to the error circle
 path_altitude = Altitude of the generated paths
 
 cam_altitude = Altitude of the camera
+
+heading = where the camera is pointed
+
+tilt = the tilt of the camera
+
+range = the distance of the camera
+
+filename = name of the output file
 
 Coords = Optional argument to specify if column names deviate from the format longitude, latitude, timestamp.
 

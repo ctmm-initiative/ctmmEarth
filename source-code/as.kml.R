@@ -11,20 +11,23 @@ as.kml <- function(DATA,
                    error_circle = FALSE,
                    error_ellipses = FALSE,
                    simulation_icons= FALSE,
-                   pov_cam = FALSE,
-                   manual_cam = FALSE,
-                   follow_cam = FALSE,
-                   central_cam = FALSE,
+                   camera_mode = "follow",
+                   all_camera_mode ="central",
                    color_sim = "red",
                    iconsize = 1.5, 
-                   markerimage = "https://pixelartmaker-data-78746291193.nyc3.digitaloceanspaces.com/image/fbc13eca20f56cd.png", 
+                   icon_image = "https://pixelartmaker-data-78746291193.nyc3.digitaloceanspaces.com/image/fbc13eca20f56cd.png", 
                    color_icon = "blue",
                    color_pred = "green",
                    sequencetime = 3,
+                   opacity = 65,
                    circlepoints = 15,
                    confidence = 2.45,
                    path_altitude = 0,
                    cam_altitude = 300,
+                   heading = 0,
+                   tilt = 0,
+                   range =0,
+                   filename = "Output.kml",
                    coords=  list(longitude = "longitude", 
                                  latitude = "latitude", 
                                  timestamp = "timestamp")) {
@@ -88,7 +91,7 @@ as.kml <- function(DATA,
   
   
   create_icon_kml <- function(lon, lat, name, color_name, opacity_percent,
-                              markerimage, iconsize, iconorder = 1) {
+                              icon_image, iconsize, iconorder = 1) {
     coord_str <- paste(lon[1], lat[1], sep = ",")
     kml_color <- get_kml_color(color_name, opacity_percent)
     
@@ -113,7 +116,7 @@ as.kml <- function(DATA,
             kml_color,
             iconsize,
             iconorder,
-            markerimage,
+            icon_image,
             coord_str)
   }
   
@@ -179,7 +182,6 @@ as.kml <- function(DATA,
           colnames(x) <- c("x", "y")
           return(x)
         }
-        browser()
         # this function is what makes the circle coordinates, confidence and circlepoints can be changed by user.
         generate_circle_coord <- function(longitude, latitude, radius, num_points = circlepoints, confidencevalue = confidence, crs_proj = NULL) {
           crs_proj <- crs_proj %||% "+proj=utm +zone=33 +datum=WGS84"
@@ -271,7 +273,6 @@ as.kml <- function(DATA,
             ungroup()
           
         }
-        browser()
         predict_path <- cbind(PRED$longitude, PRED$latitude)
         
         initial_coords <- predict_path[[1]]
@@ -280,17 +281,16 @@ as.kml <- function(DATA,
         all_predictions[[i]] <- PRED           #stores the predictions to be used in the All Tour section
         
         # creates any number of simulations the user wants, with color being set by the user.
-        opacity = 65
         for (sim in 1:num_simulations) {
           lon <- simulations[[sim]]$longitude
           lat <- simulations[[sim]]$latitude
           sim_coords <- cbind(simulations[[sim]]$longitude, simulations[[sim]]$latitude)
           kml_content <- paste0(kml_content, create_path_kml(sim_coords, path_altitude, name = paste("Animal", i, "Simulation", sim), color_sim, opacity))
-          kml_content <- paste0(kml_content, create_icon_kml(lon,lat, name = paste("Simulation", sim, i), color_sim, 65,markerimage,iconsize))
+          kml_content <- paste0(kml_content, create_icon_kml(lon,lat, name = paste("Simulation", sim, i), color_sim, opacity,icon_image,iconsize))
         }
         animalname <- animal_names[i] 
         
-        icon <- as.character(markerimage)
+        icon <- as.character(icon_image)
         # creates the main predicted path
         kml_content <- paste0(kml_content, create_path_kml(predict_path, path_altitude, name = paste("Animal", i, "Predict Path"), color_pred,opacity))
         
@@ -347,149 +347,133 @@ as.kml <- function(DATA,
         
         all_change_content <- vector("list", num_timesteps)
         all_camera_content <- vector ("list", num_timesteps)
+      # Pulls the timestamps and formats them
+        PRED$timestamps_24hr_week <- format(as.POSIXct(PRED$timestamp, tz = "UTC"),
+                                            format = "%Y-%m-%dT%H:%M:%SZ")
+        
+        
+        
         if (simulation_icons == TRUE) { 
           num_timesteps <- nrow(simulations[[1]])
           
-          
-          
           for (b in 1:num_timesteps) {
-            
+            timestamp <- PRED$timestamps_24hr_week[b]
             current_row <- data.frame(time = simulations[[1]]$t[b], i = i, stringsAsFactors = FALSE)
             
             for (sim in 1:length(simulations)) {
               current_sim <- simulations[[sim]]  
-              
-              # Get the longitude and latitude for the current timestep
               lon <- current_sim$longitude[b]
               lat <- current_sim$latitude[b]
-              
-              # Create a new column for the current simulation
               current_row[[paste0("Simulation_", sim)]] <- paste(lon,",",lat)
             }
             results <- rbind(results, current_row)
             
             for (sim in 1:length(simulations)) {
               current_sim <- simulations[[sim]]  
-              
               lon <- current_sim$longitude[b]
               lat <- current_sim$latitude[b]
               
               change_section <- sprintf('
       <Placemark targetId="Simulation %d %d">
+        <TimeStamp><when>%s</when></TimeStamp>
         <Point>
           <coordinates>%f,%f,0</coordinates>
         </Point>
       </Placemark>',
-                                        sim, i, lon, lat)
+                                        sim, i, timestamp, lon, lat)
               
-              # Add to the existing content in this row
               all_change_content[[b]] <- paste0(all_change_content[[b]], change_section)
             }
           }
         }
+        
         if (animal_icon == TRUE) { 
           num_timesteps <- nrow(PRED)
-          #animal_icon_ids[[i]] <- paste0(sprintf('"Animal %d"', animalname))
           
           for (b in 1:num_timesteps) {
-            current_row <- data.frame(
-              time = PRED$t[b],  # Access time column in PRED
-              i = i, 
-              stringsAsFactors = FALSE
-            )
-            
+            timestamp <- PRED$timestamps_24hr_week[b]
+            current_row <- data.frame(time = PRED$t[b], i = i, stringsAsFactors = FALSE)
             lon <- PRED$longitude[b]
             lat <- PRED$latitude[b]
-            
-            # Add the animal coordinates column
-            current_row[[paste0("Animal")]] <- paste(lon, ",", lat)
-            
+            current_row[["Animal"]] <- paste(lon, ",", lat)
             all_animals <- rbind(all_animals, current_row)
+            
             change_section <- sprintf('
       <Placemark targetId="Animal %d">
+        <TimeStamp><when>%s</when></TimeStamp>
         <Point>
           <coordinates>%f,%f,0</coordinates>
         </Point>
       </Placemark>',
-                                      i, lon, lat)
+                                      i, timestamp, lon, lat)
             
             all_change_content[[b]] <- paste0(all_change_content[[b]], change_section)
           }
         }
+        
         if (error_circle == TRUE) { 
           num_timesteps <- nrow(processing)
-          #circle_ids[[i]] <- paste0(sprintf('"moving_circle_%d"', animalname))
           
           for (b in 1:num_timesteps) {
+            timestamp <- PRED$timestamps_24hr_week[b]
             coords_str <- paste(
               apply(processing$circle_coords[[b]], 1, function(row) paste(row, collapse = ",")), 
               collapse = " "
             )     
-            current_row <- data.frame(
-              time = PRED$t[b],  # Access time column in PRED
-              i = i, 
-              stringsAsFactors = FALSE
-            )
-            
-
-            
-            current_row[[paste0("Circle")]] <- paste(coords_str)
-            
+            current_row <- data.frame(time = PRED$t[b], i = i, stringsAsFactors = FALSE)
+            current_row[["Circle"]] <- paste(coords_str)
             all_circle <- rbind(all_circle, current_row)
             
             change_section <- sprintf('
-            <Placemark targetId="moving_circle_%s">
-              <Polygon>
-                <outerBoundaryIs>
-                  <LinearRing>
-                    <coordinates>%s</coordinates>
-                  </LinearRing>
-                </outerBoundaryIs>
-              </Polygon>
-            </Placemark>',
-                                      i, coords_str)
+      <Placemark targetId="moving_circle_%s">
+        <TimeStamp><when>%s</when></TimeStamp>
+        <Polygon>
+          <outerBoundaryIs>
+            <LinearRing>
+              <coordinates>%s</coordinates>
+            </LinearRing>
+          </outerBoundaryIs>
+        </Polygon>
+      </Placemark>',
+                                      i, timestamp, coords_str)
             
             all_change_content[[b]] <- paste0(all_change_content[[b]], change_section)
           }
         }
+        
         if (error_ellipses == TRUE) { 
           num_timesteps <- nrow(processing)
-
+          
           for (b in 1:num_timesteps) {
+            timestamp <- PRED$timestamps_24hr_week[b]
             coords_str <- paste(
               apply(processing$ellipses_coords[[b]], 1, function(row) paste(row, collapse = ",")), 
               collapse = " "
             )     
-            current_row <- data.frame(
-              time = PRED$t[b],  # Access time column in PRED
-              i = i, 
-              stringsAsFactors = FALSE
-            )
-            
-            
-            
-            current_row[[paste0("Ellipsoid")]] <- paste(coords_str)
-            
+            current_row <- data.frame(time = PRED$t[b], i = i, stringsAsFactors = FALSE)
+            current_row[["Ellipsoid"]] <- paste(coords_str)
             all_ellipsoid <- rbind(all_ellipsoid, current_row)
             
             change_section <- sprintf('
-            <Placemark targetId="moving_ellipsoid_%s">
-              <Polygon>
-                <outerBoundaryIs>
-                  <LinearRing>
-                    <coordinates>%s</coordinates>
-                  </LinearRing>
-                </outerBoundaryIs>
-              </Polygon>
-            </Placemark>',
-                                      i, coords_str)
+      <Placemark targetId="moving_ellipsoid_%s">
+        <TimeStamp><when>%s</when></TimeStamp>
+        <Polygon>
+          <outerBoundaryIs>
+            <LinearRing>
+              <coordinates>%s</coordinates>
+            </LinearRing>
+          </outerBoundaryIs>
+        </Polygon>
+      </Placemark>',
+                                      i, timestamp, coords_str)
             
             all_change_content[[b]] <- paste0(all_change_content[[b]], change_section)
           }
         }
-        if (pov_cam == TRUE){ 
+        
+        if (camera_mode == "pov"){ 
           num_timesteps <- nrow(processing)
-
+          
           for (b in 1:num_timesteps) {
             lon1 <- PRED$longitude[b]
             lat1 <- PRED$latitude[b]
@@ -503,12 +487,12 @@ as.kml <- function(DATA,
             )
             
             
-
-
+            
+            
             azimuth <- bearing(c(lon1, lat1), c(lon2, lat2))
             
             range <- distHaversine(c(lon1, lat1), c(lon2, lat2))
-
+            
             change_section <- sprintf('
               
         <gx:duration>%f</gx:duration>
@@ -521,18 +505,22 @@ as.kml <- function(DATA,
           <tilt>90</tilt>
           <range>%f</range>
           <gx:altitudeMode>relativeToGround</gx:altitudeMode>
+        <gx:TimeStamp>
+        <when>%s</when>
+        </gx:TimeStamp>
         </LookAt>
       ',
-                                      calculated_duration, lon2, lat2, azimuth,range)
+                                      calculated_duration, lon2, lat2, azimuth,range,timestamp)
             
             all_camera_content[[b]] <- paste0(all_camera_content[[b]], change_section)
           }
         }
-        if (follow_cam == TRUE){          num_timesteps <- nrow(processing)
+        if (camera_mode == "follow"){          num_timesteps <- nrow(processing)
         
         for (b in 1:num_timesteps) {
           lon <- PRED$longitude[b]
           lat <- PRED$latitude[b]
+          timestamp <- PRED$timestamps_24hr_week[b]
           
           current_row <- data.frame(
             time = PRED$t[b],  # Access time column in PRED
@@ -548,49 +536,145 @@ as.kml <- function(DATA,
           <longitude>%f</longitude>
           <latitude>%f</latitude>
           <altitude>%f</altitude>
-          <tilt>0</tilt>
+          <heading>%f</heading>          
+          <tilt>%f</tilt>                
+          <range>%f</range>
           <gx:altitudeMode>relativeToGround</gx:altitudeMode>
+        <gx:TimeStamp>
+        <when>%s</when>
+        </gx:TimeStamp>
         </LookAt>
+
       ',
-                                    calculated_duration, lon, lat, cam_altitude)
+                                    calculated_duration, lon, lat, cam_altitude, heading, tilt, range, timestamp)
           
           all_camera_content[[b]] <- paste0(all_camera_content[[b]], change_section)
-        
-        }
+          timeupdate_section <- sprintf('
+        <gx:AnimatedUpdate>
+          <gx:duration>0.0</gx:duration>
+          <Update>
+            <targetHref/>
+            <Change>
+              <Document targetId="doc">
+                <TimeStamp>
+                  <when>%s</when>
+                </TimeStamp>
+              </Document>
+            </Change>
+          </Update>
+        </gx:AnimatedUpdate>', timestamp)
+          
+          all_camera_content[[b]] <- paste0(all_camera_content[[b]], timeupdate_section)
           
         }
-        if (manual_cam == TRUE){ 
-           num_timesteps <- nrow(processing)
-           
-           for (b in 1:num_timesteps) {
-             lon1 <- PRED$longitude[b]
-             lat1 <- PRED$latitude[b]
-             lon2 <- PRED$longitude[b+1]
-             lat2 <- PRED$latitude[b+1]
-             
-             current_row <- data.frame(
-               time = PRED$t[b],  # Access time column in PRED
-               i = i, 
-               stringsAsFactors = FALSE
-             )
-             
-             
-             
-             
-             azimuth <- bearing(c(lon1, lat1), c(lon2, lat2))
-             
-             range <- distHaversine(c(lon1, lat1), c(lon2, lat2))
-             
-             change_section <- sprintf('
+        
+        }
+        if (camera_mode == "test"){          num_timesteps <- nrow(processing)
+        
+        for (b in 1:num_timesteps) {
+          lon <- PRED$longitude[b]
+          lat <- PRED$latitude[b]
+          timestamp <- PRED$timestamps_24hr_week[b]
+          
+          current_row <- data.frame(
+            time = PRED$t[b],  # Access time column in PRED
+            i = i, 
+            stringsAsFactors = FALSE
+          )
+          
+          change_section <- sprintf('
               
         <gx:duration>%f</gx:duration>
+        <gx:flyToMode>smooth</gx:flyToMode>
+        <LookAt>
+          <longitude>%f</longitude>
+          <latitude>%f</latitude>
+          <altitude>%f</altitude>       <!-- somewhat above ground, but not too high -->
+          <heading>90</heading>          <!-- face east; adjust for desired direction -->
+          <tilt>125</tilt>                <!-- steep angle, closer to ground level view -->
+          <range>500</range> 
+          <gx:altitudeMode>relativeToGround</gx:altitudeMode>
+        <gx:TimeStamp>
+        <when>%s</when>
+        </gx:TimeStamp>
+        </LookAt>
+
       ',
-                                       calculated_duration)
-             
-             all_camera_content[[b]] <- paste0(all_camera_content[[b]], change_section)
-           }
-         }
-        
+                                    calculated_duration, lon, lat, cam_altitude,timestamp)
+          
+          all_camera_content[[b]] <- paste0(all_camera_content[[b]], change_section)
+          timeupdate_section <- sprintf('
+        <gx:AnimatedUpdate>
+          <gx:duration>0.0</gx:duration>
+          <Update>
+            <targetHref/>
+            <Change>
+              <Document targetId="doc">
+                <TimeStamp>
+                  <when>%s</when>
+                </TimeStamp>
+              </Document>
+            </Change>
+          </Update>
+        </gx:AnimatedUpdate>', timestamp)
+          
+          all_camera_content[[b]] <- paste0(all_camera_content[[b]], timeupdate_section)
+          
+        }}
+        if (camera_mode == "manual"){ 
+          num_timesteps <- nrow(processing)
+          timestamp <- PRED$timestamps_24hr_week[b]
+          
+          for (b in 1:num_timesteps) {
+            lon1 <- PRED$longitude[b]
+            lat1 <- PRED$latitude[b]
+            lon2 <- PRED$longitude[b+1]
+            lat2 <- PRED$latitude[b+1]
+            
+            current_row <- data.frame(
+              time = PRED$t[b],  # Access time column in PRED
+              i = i, 
+              stringsAsFactors = FALSE
+            )
+            
+            
+            
+            
+            azimuth <- bearing(c(lon1, lat1), c(lon2, lat2))
+            
+            range <- distHaversine(c(lon1, lat1), c(lon2, lat2))
+            
+            change_section <- sprintf('
+              
+        <gx:duration>%f</gx:duration>
+        <gx:flyToMode>smooth</gx:flyToMode>
+        <gx:TimeStamp>
+        <when>%s</when>
+        </gx:TimeStamp>
+      ',
+                                      calculated_duration,timestamp)
+            
+            all_camera_content[[b]] <- paste0(all_camera_content[[b]], change_section)
+            timeupdate_section <- sprintf('
+        <gx:AnimatedUpdate>
+          <gx:duration>0.0</gx:duration>
+          <Update>
+            <targetHref/>
+            <Change>
+              <Document targetId="doc">
+                <TimeStamp>
+                  <when>%s</when>
+                </TimeStamp>
+              </Document>
+            </Change>
+          </Update>
+        </gx:AnimatedUpdate>', timestamp)
+            
+            all_camera_content[[b]] <- paste0(all_camera_content[[b]], timeupdate_section)
+          }
+        }
+        # monitor message for each animated update
+        message(sprintf("Writing kml fil Animal %d", i))    
         for (b in 1:nrow(predict_path)) {
           
           
@@ -609,8 +693,7 @@ as.kml <- function(DATA,
       </gx:FlyTo>
       ', calculated_duration, all_change_content[[b]], all_camera_content[[b]]))
           
-          # monitor message for each animated update
-          message(sprintf("Animating position %d for Animal %d", b, i))
+
         }
         
         # close the tour section after all animals have had their tour generated
@@ -804,6 +887,8 @@ as.kml <- function(DATA,
       for (b in 1:nrow(combined_predictions)) {
         
         
+        # monitor message for each animated update
+        message(sprintf("Animating combined animal tour"))
         kml_content <- paste0(kml_content, sprintf('
       <gx:AnimatedUpdate>
         <gx:duration>%f</gx:duration>
@@ -818,9 +903,7 @@ as.kml <- function(DATA,
        %s
       </gx:FlyTo>
       ', calculated_duration, all_change_content[[b]], all_camera_content[[b]]))
-        
-        # monitor message for each animated update
-        message(sprintf("Animating position %d for Moving Circle Polygon %s", b, animalname))
+
       }
       kml_content <- paste0(kml_content, '
     </gx:Playlist>
@@ -844,14 +927,14 @@ as.kml <- function(DATA,
   
   kml_header <- '<?xml version="1.0" encoding="UTF-8"?>
   <kml xmlns="http://www.opengis.net/kml/2.2" xmlns:gx="http://www.google.com/kml/ext/2.2">
-  <Document>
+  <Document id="doc">
   <name>Animal Simulation Paths</name>'
   
   kml_footer <- '</Document>
   </kml>'
   
   kml_output <- paste0(kml_header, kml_content, kml_footer)
-  writeLines(kml_output, "test.kml")
+  writeLines(kml_output, filename)
 }
 
  data("buffalo")
@@ -871,12 +954,12 @@ as.kml(Cillia,
        simulation_icons = TRUE,
        error_circle = TRUE,
        error_ellipses = TRUE,
-       central_cam = TRUE,
-       pov_cam = FALSE,
-       follow_cam = TRUE,
+       central_cam = FALSE,
+       camera_mode = "follow",
+       color_sim = "red",
+       color_pred = "white",
        sequencetime = 3,
        duration = 60,
        circlepoints = 25,
+       cam_altitude = 50,
        num_simulations = 10)
-Testing <- FIT$sigma
-print(Testing)
